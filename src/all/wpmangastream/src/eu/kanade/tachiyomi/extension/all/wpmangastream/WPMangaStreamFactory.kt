@@ -59,7 +59,8 @@ class WPMangaStreamFactory : SourceFactory {
         KaisarKomik(),
         MasterKomik(),
         KomikRu(),
-        MangaShiro()
+        MangaShiro(),
+        MangaKita()
     )
 }
 
@@ -72,6 +73,169 @@ class LiebeSchneeHiver : WPMangaStream(
 
 class MangaShiro : WPMangaStream("MangaShiro", "https://mangashiro.co", "id")
 
+class MangaKita : WPMangaStream("MangaKita", "https://mangakita.net", "id", dateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale.forLanguageTag("en"))) {
+    override fun popularMangaRequest(page: Int): Request {
+        return GET("$baseUrl/manga/?page=$page&order=popular", headers)
+    }
+
+    override fun latestUpdatesRequest(page: Int): Request {
+        return GET("$baseUrl/manga/?page=$page&order=update", headers)
+    }
+
+    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
+        val url = if (query.isNotBlank()) {
+            val url = HttpUrl.parse("$baseUrl/page/$page")!!.newBuilder()
+            val pattern = "\\s+".toRegex()
+            val q = query.replace(pattern, "+")
+            if (query.isNotEmpty()) {
+                url.addQueryParameter("s", q)
+            } else {
+                url.addQueryParameter("s", "")
+            }
+            url.toString()
+        } else {
+            val url = HttpUrl.parse("$baseUrl/manga/?page=$page")!!.newBuilder()
+            var orderBy: String
+            (if (filters.isEmpty()) getFilterList() else filters).forEach { filter ->
+                when (filter) {
+                    is StatusFilter -> url.addQueryParameter("status", arrayOf("", "ongoing", "completed", "hiatus")[filter.state])
+                    is TypeFilter -> {
+                        orderBy = filter.toUriPart()
+                        url.addQueryParameter("type", orderBy)
+                    }
+                    is GenreListFilter -> {
+                        val genreInclude = mutableListOf<String>()
+                        filter.state.forEach {
+                            if (it.state == 1) {
+                                genreInclude.add(it.id)
+                            }
+                        }
+                        if (genreInclude.isNotEmpty()) {
+                            genreInclude.forEach { genre ->
+                                url.addQueryParameter("genre[]", genre)
+                            }
+                        }
+                    }
+                    is SortByFilter -> {
+                        orderBy = filter.toUriPart()
+                        url.addQueryParameter("order", orderBy)
+                    }
+                }
+            }
+            url.toString()
+        }
+        // throw Exception(url)
+        return GET(url, headers)
+    }
+
+    override fun popularMangaFromElement(element: Element): SManga {
+        val manga = SManga.create()
+        manga.thumbnail_url = element.select("div.limit img").attr("src")
+        element.select("a").first().let {
+            manga.setUrlWithoutDomain(it.attr("href"))
+            manga.title = it.attr("title")
+        }
+        return manga
+    }
+
+    override fun mangaDetailsParse(document: Document): SManga {
+        return SManga.create().apply {
+            document.select(".infotable").firstOrNull()?.let { infoElement ->
+                status = parseStatus(infoElement.select("td:contains(Status) + td").firstOrNull()?.ownText())
+                author = infoElement.select("td:contains(Author) + td").firstOrNull()?.ownText()
+                artist = author
+            }
+            genre = document.select(".seriestugenre a").joinToString { it.text() }
+            description = document.select("div[itemprop=description]").text()
+            thumbnail_url = document.select(".seriestucontl img").attr("src")
+        }
+    }
+
+    override fun pageListParse(document: Document): List<Page> {
+        val pages = mutableListOf<Page>()
+        val scriptToParse = document.toString().substringAfter("\"images\":").substringBefore("}],")
+        val json = JsonParser().parse(scriptToParse).asJsonArray
+        json.forEachIndexed { i, url ->
+            /* REMOVING QUOTES AROUND STRING */
+            val url_clean = url.toString().removeSurrounding("\"")
+            if (!url_clean.contains(Regex("""(filerun|photothumb\.db)"""))) {
+                pages.add(Page(i, "", url_clean))
+            }
+        }
+        return pages
+    }
+
+    override fun getFilterList() = FilterList(
+        Filter.Header("NOTE: Ignored if using text search!"),
+        Filter.Separator(),
+        SortByFilter(),
+        Filter.Separator(),
+        StatusFilter(),
+        Filter.Separator(),
+        TypeFilter(),
+        Filter.Separator(),
+        GenreListFilter(getGenreList())
+    )
+    override fun getGenreList(): List<Genre> = listOf(
+        Genre("Action", "3"),
+        Genre("Adventure", "9"),
+        Genre("Comedy", "10"),
+        Genre("Cooking", "217"),
+        Genre("Dark Fantasy", "211"),
+        Genre("Demons", "154"),
+        Genre("Detective", "215"),
+        Genre("Drama", "11"),
+        Genre("Ecchi", "14"),
+        Genre("Fantasy", "12"),
+        Genre("Game", "250"),
+        Genre("Gender Bender", "57"),
+        Genre("Harem", "46"),
+        Genre("Historical", "168"),
+        Genre("Horor", "175"),
+        Genre("Horror", "4"),
+        Genre("Isekai", "259"),
+        Genre("Magic", "216"),
+        Genre("Manga", "285"),
+        Genre("Manhua", "310"),
+        Genre("Manhwa", "271"),
+        Genre("Martial Arts", "33"),
+        Genre("Mature", "5"),
+        Genre("Mecha", "178"),
+        Genre("Military", "224"),
+        Genre("Mystery", "22"),
+        Genre("Ninja", "32"),
+        Genre("One Shot", "135"),
+        Genre("Parody", "214"),
+        Genre("Police", "371"),
+        Genre("Psychological", "24"),
+        Genre("Reincarnation", "340"),
+        Genre("Romace", "282"),
+        Genre("Romance", "35"),
+        Genre("Samurai", "173"),
+        Genre("School", "16"),
+        Genre("School Life", "29"),
+        Genre("Sci-fi", "6"),
+        Genre("Seinen", "7"),
+        Genre("Shoujo", "74"),
+        Genre("Shounen", "13"),
+        Genre("Slice of Life", "30"),
+        Genre("Smut", "36"),
+        Genre("Sport", "15"),
+        Genre("Sports", "40"),
+        Genre("Super Power", "54"),
+        Genre("Superhero", "84"),
+        Genre("Superheroes", "213"),
+        Genre("Supernatural", "23"),
+        Genre("Supranatural", "64"),
+        Genre("Survival", "212"),
+        Genre("Thriller", "118"),
+        Genre("Tragedy", "8"),
+        Genre("Vampire", "155"),
+        Genre("Webtoon", "60"),
+        Genre("Webtoons", "191"),
+        Genre("Yaoi", "223")
+    )
+}
 class KomikRu : WPMangaStream("KomikRu", "https://komikru.com", "id", SimpleDateFormat("MMMM dd, yyyy", Locale.forLanguageTag("id")))
 
 class MasterKomik : WPMangaStream("MasterKomik", "https://masterkomik.com", "id")
